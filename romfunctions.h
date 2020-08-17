@@ -23,9 +23,9 @@ static inline void rom_putstring_uart(uint8_t* text)
 	((rom_putstring_uart_f)_romfunctions[ROM_PUTSTRING_UART])(text);
 }
 
-typedef int (*rom_uart_available_f) ();   
+typedef uint8_t (*rom_uart_available_f) ();   
 
-static inline int rom_uart_available()
+static inline uint8_t rom_uart_available()
 {
 	return ((rom_uart_available_f)_romfunctions[ROM_UART_AVAILABLE])();
 }

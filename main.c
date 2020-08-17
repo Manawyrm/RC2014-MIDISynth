@@ -179,23 +179,21 @@ void handle_midi_command(uint8_t inputcommand, uint8_t note, uint8_t velocity)
 	print_memory(&velocity, 1);
 	rom_putstring_uart("\n");*/
 
-	set_ym_register(YM2149_MIXER, 0x38); // Tone Channel A,B,C 
+	set_ym_register(YM2149_MIXER, 0x38); // Mixer, enable Channel A,B,C 
 
 	if (command == 0x90)
 	{
 		note_on(note, velocity);
-		//dump_channels();
 	}
 
 	if (command == 0x80)
 	{
 		note_off(note);
-		//dump_channels();
 	}
 
 	if (command == 0x85)
 	{
-		set_ym_register(note, velocity);
+		//set_ym_register(note, velocity);
 	}
 }
 
