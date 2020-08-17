@@ -38,6 +38,7 @@ const uint16_t midifreqlut[] = {
 __sfr __at 0xD8 YM2149_REGISTER;
 __sfr __at 0xD0 YM2149_DATA;
 
+uint32_t ticks;
 
 void print_memory(const void *addr, uint16_t size)
 {
@@ -61,6 +62,40 @@ void print_memory(const void *addr, uint16_t size)
     }
 }
 
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
+
+struct channel
+{
+	uint8_t reg_level;
+	uint8_t freq_lsb;
+	uint8_t freq_msb;
+	uint8_t note;
+	uint32_t started_tick;
+};
+
+struct channel channels[] = {
+	{	/* Channel B is mixed into the stereo center, use it as the primary note */
+		.reg_level = YM2149_LEVELB,
+		.freq_lsb  = YM2149_FREQB_LSB,
+		.freq_msb  = YM2149_FREQB_MSB,
+		.note 	   = 0x00,
+		.started_tick   = 0
+	},
+	{
+		.reg_level = YM2149_LEVELA,
+		.freq_lsb  = YM2149_FREQA_LSB,
+		.freq_msb  = YM2149_FREQA_MSB,
+		.note 	   = 0x00,
+		.started_tick   = 0
+	},
+	{
+		.reg_level = YM2149_LEVELC,
+		.freq_lsb  = YM2149_FREQC_LSB,
+		.freq_msb  = YM2149_FREQC_MSB,
+		.note 	   = 0x00,
+		.started_tick   = 0
+	}
+};
 
 static inline void set_ym_register(uint8_t reg, uint8_t value)
 {
@@ -68,12 +103,70 @@ static inline void set_ym_register(uint8_t reg, uint8_t value)
 	YM2149_DATA = value; 
 }
 
+void note_off(uint8_t note)
+{
+	uint8_t channel; 
+
+	for (channel = 0; channel < ARRAY_SIZE(channels); ++channel)
+	{
+		if (channels[channel].note == note)
+		{
+			set_ym_register(channels[channel].reg_level, 0x00); // volume off, mode 0
+			channels[channel].note = 0x00; 
+			channels[channel].started_tick = 0x00;
+			return;
+		}
+	}
+}
+
+void note_on(uint8_t note, uint8_t velocity)
+{
+	uint8_t channel; 
+	uint16_t tonereg; 
+
+	if (velocity == 0)
+	{
+		note_off(note);
+		return;
+	}
+
+	for (channel = 0; channel < ARRAY_SIZE(channels); ++channel)
+	{
+		if (channels[channel].note == 0x00 || channels[channel].note == note)
+		{
+			tonereg = midifreqlut[note];
+
+			//set_ym_register(channels[channel].reg_level, (velocity >> 3) & 0x0F); // dynamic volume
+			set_ym_register(channels[channel].reg_level, 0x08); // max volume, mode 0
+
+			set_ym_register(channels[channel].freq_lsb, tonereg & 0x00FF);
+			set_ym_register(channels[channel].freq_msb, (tonereg & 0x0F00) >> 8);
+			channels[channel].note = note; 
+			channels[channel].started_tick  = ticks;
+			return;
+		}
+	}
+}
+
+void dump_channels()
+{
+	uint8_t channel; 
+
+	for (channel = 0; channel < ARRAY_SIZE(channels); ++channel)
+	{
+		rom_putstring_uart("channel: 0x");
+		print_memory(&channel, 1);
+		rom_putstring_uart(" note: 0x");
+		print_memory(&channels[channel].note, 1);
+		rom_putstring_uart("\n");
+
+	}
+}
+
 void handle_midi_command(uint8_t inputcommand, uint8_t note, uint8_t velocity)
 {
 	uint8_t command; 
 	uint8_t channel; 
-
-	uint16_t tonereg; 
 
 	command = inputcommand & 0xF0; 
 	channel = inputcommand & 0x0F; 
@@ -86,23 +179,23 @@ void handle_midi_command(uint8_t inputcommand, uint8_t note, uint8_t velocity)
 	print_memory(&velocity, 1);
 	rom_putstring_uart("\n");*/
 
-	set_ym_register(YM2149_MIXER, 62); 
-
-
-	if (command == 0x80)
-	{
-		// note on
-		tonereg = midifreqlut[note];
-
-		set_ym_register(YM2149_LEVELA, 0x08); // max volume, mode 0
-		set_ym_register(YM2149_FREQA_LSB, tonereg & 0x00FF);
-		set_ym_register(YM2149_FREQA_MSB, (tonereg & 0x0F00) >> 8);		
-	}
+	set_ym_register(YM2149_MIXER, 0x38); // Tone Channel A,B,C 
 
 	if (command == 0x90)
 	{
-		// note off
-		set_ym_register(YM2149_LEVELA, 0x08); // volume off, mode 0
+		note_on(note, velocity);
+		//dump_channels();
+	}
+
+	if (command == 0x80)
+	{
+		note_off(note);
+		//dump_channels();
+	}
+
+	if (command == 0x85)
+	{
+		set_ym_register(note, velocity);
 	}
 }
 
@@ -110,24 +203,19 @@ void main()
 {
 	uint8_t input = 0; 
 	uint8_t input_byte = 0; 
-
 	uint8_t command = 0; 
 	uint8_t note = 0; 
 	uint8_t velocity = 0; 
 
 	rom_putstring_uart("hello from midisynth!\n");
 
+	ticks = 0;
+
 	while (1)
 	{
-		if (rom_uart_available())
+		while (rom_uart_available())
 		{
 			input = rom_uart_read();
-
-			/*rom_putstring_uart("byte: ");
-			print_memory(&input, 1);
-			rom_putstring_uart(" #: ");
-			print_memory(&input_byte, 1);
-			rom_putstring_uart("\n");*/
 
 			if (input > 0x7F)
 			{
@@ -154,6 +242,46 @@ void main()
 						input_byte = 0; 
 						command = 0; 
 					}
+				}
+			}
+
+			/*rom_putstring_uart("read: ");
+			print_memory(&input, 1);
+			rom_putstring_uart(" #: ");
+			print_memory(&input_byte, 1);
+
+			rom_putstring_uart(" command: ");
+			print_memory(&command, 1);
+
+			rom_putstring_uart(" note: ");
+			print_memory(&note, 1);
+
+			rom_putstring_uart(" velocity: ");
+			print_memory(&velocity, 1);
+
+			rom_putstring_uart("\n");*/
+		}
+
+		ticks++;
+
+		if (ticks % 1000 == 0)
+		{
+			// unstick hung notes
+			uint8_t channel; 
+
+			for (channel = 0; channel < ARRAY_SIZE(channels); ++channel)
+			{
+				if (channels[channel].note != 0x00 && channels[channel].started_tick + 4000 <= ticks)
+				{
+					rom_putstring_uart("hung note on channel ");
+					print_memory(&channel, 1);
+					rom_putstring_uart(" note ");
+					print_memory(&channels[channel].note, 1);
+					rom_putstring_uart("\n");
+
+					set_ym_register(channels[channel].reg_level, 0x00); // volume off, mode 0
+					channels[channel].note = 0x00; 
+					channels[channel].started_tick = 0x00;
 				}
 			}
 		}
